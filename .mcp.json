@@ -1,0 +1,40 @@
+{
+  "mcpServers": {
+    "gerrit": {
+      "type": "http",
+      "url": "https://gerrit-mcp.yektanet.tech/mcp"
+    },
+    "trino": {
+      "type": "http",
+      "url": "https://trino-mcp.yektanet.tech/mcp"
+    },
+    "clickhouse": {
+      "type": "http",
+      "url": "https://clickhouse-mcp.yektanet.tech/mcp"
+    },
+    "prometheus": {
+      "type": "http",
+      "url": "https://prometheus-mcp.yektanet.tech/mcp"
+    },
+    "metabase": {
+      "type": "http",
+      "url": "https://metabase-mcp.yektanet.tech/mcp"
+    },
+    "kubernetes": {
+      "type": "http",
+      "url": "https://k8s-mcp.yektanet.tech/mcp"
+    },
+    "profpulse": {
+      "type": "http",
+      "url": "https://profpulse.yektanet.tech/mcp"
+    },
+    "jenkins": {
+      "type": "http",
+      "url": "https://jenkins-mcp.yektanet.tech/mcp"
+    },
+    "grafana": {
+      "type": "http",
+      "url": "https://grafana-mcp.yektanet.tech/mcp"
+    }
+  }
+}
