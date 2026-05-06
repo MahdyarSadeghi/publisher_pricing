@@ -3,7 +3,6 @@ Generates a standalone dashboard.html — no server needed.
 Usage: python3 generate_html.py
 """
 import json
-import numpy as np
 import pandas as pd
 
 # ─── Jalali ───────────────────────────────────────────────────────────────────
@@ -69,6 +68,7 @@ month_fa_map = {m: month_to_fa(m) for m in df["month"].unique()}
 df["mf"] = df["month"].map(month_fa_map)
 
 # ─── Data structures ──────────────────────────────────────────────────────────
+
 publishers = (df[["publisher_id","publisher_name"]].drop_duplicates()
               .sort_values("publisher_name")
               .rename(columns={"publisher_id":"id","publisher_name":"name"})
@@ -77,6 +77,17 @@ publishers = (df[["publisher_id","publisher_name"]].drop_duplicates()
 pub_avg_pv = {str(k): int(round(v))
               for k,v in daily_pv.groupby("publisher_id")["pub_daily_pv"].mean().items()}
 
+# publisher primary category
+pub_cats = {}
+for pid, grp in df.groupby("publisher_id"):
+    cats = grp["category"].dropna()
+    pub_cats[str(pid)] = str(cats.mode()[0]) if len(cats) > 0 else ""
+
+# available months sorted (for date range filter)
+months_sorted = sorted(month_fa_map.items(), key=lambda x: x[0])
+months_list = [{"key": k, "fa": v} for k, v in months_sorted]
+
+# pub_monthly_pv
 pmp = (daily_pv
        .assign(month=lambda x: pd.to_datetime(x["date"]).dt.to_period("M").astype(str))
        .groupby(["publisher_id","month"])["pub_daily_pv"].sum().reset_index()
@@ -101,14 +112,16 @@ tab2["pid"]    = tab2["pid"].astype(str)
 tab2["pos_id"] = tab2["pos_id"].astype(str)
 
 DATA = {
-    "publishers":    publishers,
-    "pub_avg_pv":    pub_avg_pv,
+    "publishers":     publishers,
+    "pub_avg_pv":     pub_avg_pv,
+    "pub_cats":       pub_cats,
+    "months_list":    months_list,
     "pub_monthly_pv": pmp.to_dict("records"),
-    "tab1":          tab1.to_dict("records"),
-    "tab2_monthly":  tab2.to_dict("records"),
+    "tab1":           tab1.to_dict("records"),
+    "tab2_monthly":   tab2.to_dict("records"),
 }
 data_json = json.dumps(DATA, ensure_ascii=False)
-print(f"publishers:{len(publishers)}  tab1:{len(tab1)}  tab2:{len(tab2)}  pmp:{len(pmp)}")
+print(f"publishers:{len(publishers)}  tab1:{len(tab1)}  tab2:{len(tab2)}  months:{len(months_list)}")
 
 # ─── HTML ─────────────────────────────────────────────────────────────────────
 HTML = r"""<!DOCTYPE html>
@@ -122,36 +135,66 @@ HTML = r"""<!DOCTYPE html>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:Tahoma,'Vazir',sans-serif;background:#eef0f5;color:#222;direction:rtl}
 
-.topbar{background:#16213e;color:#fff;padding:12px 24px;display:flex;align-items:center;gap:20px;flex-wrap:wrap}
-.topbar h1{font-size:1.05rem;flex:1;white-space:nowrap}
-.topbar .ctrl{display:flex;flex-direction:column;gap:3px}
-.topbar label{font-size:0.73rem;color:#aab}
-.topbar select,.topbar input[type=range]{padding:5px 9px;border-radius:6px;border:none;font-family:Tahoma,sans-serif;font-size:0.85rem;background:#fff;min-width:200px;cursor:pointer}
-.topbar .rrow{display:flex;align-items:center;gap:8px}
-.topbar .rv{font-size:0.85rem;min-width:28px}
+/* topbar */
+.topbar{background:#16213e;color:#fff;padding:12px 24px;display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap}
+.topbar h1{font-size:1rem;color:#fff;align-self:center;flex:none;white-space:nowrap}
+.ctrl{display:flex;flex-direction:column;gap:4px}
+.ctrl label{font-size:0.7rem;color:#9ab;letter-spacing:.3px}
+.ctrl select{padding:6px 10px;border-radius:6px;border:none;font-family:Tahoma,sans-serif;font-size:0.83rem;background:#fff;cursor:pointer}
+.ctrl input[type=range]{width:120px;accent-color:#4285F4}
+.rrow{display:flex;align-items:center;gap:6px}
+.rv{font-size:0.83rem;color:#dde;min-width:24px}
 
-.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;padding:16px 24px 0}
-.kpi{background:#fff;border-radius:10px;padding:14px 18px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
-.kpi .lbl{font-size:0.72rem;color:#888;margin-bottom:3px}
-.kpi .val{font-size:1.35rem;font-weight:bold;color:#16213e}
+/* search */
+.search-wrap{position:relative}
+.search-wrap input{
+  padding:6px 32px 6px 10px;border-radius:6px;border:none;
+  font-family:Tahoma,sans-serif;font-size:0.83rem;
+  width:220px;background:#fff;color:#222;
+  outline:none
+}
+.search-wrap .si{position:absolute;left:8px;top:50%;transform:translateY(-50%);font-size:0.9rem;pointer-events:none}
+.sugg{
+  position:absolute;top:calc(100% + 4px);right:0;
+  background:#fff;border:1px solid #dde;border-radius:8px;
+  box-shadow:0 4px 16px rgba(0,0,0,.15);
+  min-width:260px;max-height:220px;overflow-y:auto;
+  z-index:100;display:none
+}
+.sugg.open{display:block}
+.sugg-item{
+  padding:8px 12px;cursor:pointer;font-size:0.82rem;
+  border-bottom:1px solid #f0f2f8;color:#222
+}
+.sugg-item:last-child{border-bottom:none}
+.sugg-item:hover{background:#eef3ff}
+.sugg-item .sid{font-size:0.7rem;color:#888;margin-right:6px}
+.sugg-item.active-pub{background:#eef3ff;font-weight:bold}
+.no-result{padding:12px;color:#888;font-size:0.8rem;text-align:center}
 
+/* tabs */
 .tabs-bar{display:flex;padding:16px 24px 0;gap:4px}
 .tab-btn{padding:9px 24px;background:#d8dce8;border:none;cursor:pointer;font-family:Tahoma,sans-serif;font-size:0.87rem;border-radius:8px 8px 0 0;color:#555;transition:background .15s}
 .tab-btn.active{background:#fff;color:#16213e;font-weight:bold}
 
-.tab-panel{display:none;background:#fff;margin:0 24px 24px;border-radius:0 0 10px 10px;padding:20px;box-shadow:0 1px 4px rgba(0,0,0,.08);overflow-y:auto;max-height:calc(100vh - 195px)}
+/* panels */
+.tab-panel{display:none;background:#fff;margin:0 24px 24px;border-radius:0 0 10px 10px;padding:20px;box-shadow:0 1px 4px rgba(0,0,0,.08);overflow-y:auto;max-height:calc(100vh - 140px)}
 .tab-panel.active{display:block}
 
+/* section title */
 .sec{font-size:0.93rem;font-weight:bold;color:#16213e;border-right:3px solid #4285F4;padding-right:8px;margin:22px 0 12px}
 .sec:first-child{margin-top:0}
 
+/* filter row */
 .frow{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
 .frow label{font-size:0.8rem;color:#666;white-space:nowrap}
 .frow select{padding:5px 9px;border-radius:6px;border:1px solid #dde;font-family:Tahoma,sans-serif;font-size:0.82rem;cursor:pointer}
 
-.chart2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:4px}
+/* chart grid */
+.chart2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 
-.tbl-wrap{overflow-x:auto;margin-top:4px}
+/* tables */
+.tbl-wrap{overflow-x:auto}
 table{width:100%;border-collapse:collapse;font-size:0.81rem}
 thead th{background:#f0f3fa;padding:8px 10px;text-align:center;font-weight:bold;cursor:pointer;user-select:none;white-space:nowrap}
 thead th:hover{background:#e2e7f5}
@@ -159,11 +202,14 @@ tbody td{padding:7px 10px;border-bottom:1px solid #f0f0f0;text-align:center}
 tbody tr:hover{background:#f8faff}
 .total-row td{background:#eef3ff;font-weight:bold;border-top:2px solid #4285F4}
 
-/* pricing */
+/* sim bar */
 .sim-bar{background:#f4f7ff;border-radius:8px;padding:10px 14px;font-size:0.83rem;margin-bottom:16px;line-height:1.8}
 .sim-bar .spubs{color:#555;font-size:0.78rem}
+.cat-badge{display:inline-block;background:#4285F4;color:#fff;font-size:0.68rem;border-radius:4px;padding:1px 5px;margin-right:4px;vertical-align:middle}
+.cat-badge.match{background:#34A853}
 
-.bench-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-top:4px}
+/* bench grid */
+.bench-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-top:4px}
 .bench-card{border:1px solid #e0e4f0;border-radius:8px;overflow:hidden;font-size:0.8rem}
 .bench-hdr{background:#2c3e6b;color:#fff;padding:8px 12px;font-size:0.82rem;font-weight:bold}
 .bench-body{padding:10px 12px}
@@ -176,22 +222,37 @@ tbody tr:hover{background:#f8faff}
 
 .nodata{color:#999;padding:20px;text-align:center;font-size:0.85rem}
 
-@media(max-width:700px){
-  .kpis{grid-template-columns:1fr 1fr}
-  .chart2{grid-template-columns:1fr}
-}
+@media(max-width:700px){.chart2{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 
+<!-- topbar -->
 <div class="topbar">
-  <h1>📊 Publisher Pricing Dashboard</h1>
+  <h1>📊 Publisher Pricing</h1>
+
   <div class="ctrl">
-    <label>پابلیشر</label>
-    <select id="pubSel" onchange="boot()"></select>
+    <label>جستجوی ناشر</label>
+    <div class="search-wrap">
+      <input id="pubSearch" type="text" placeholder="نام یا آیدی ناشر..." autocomplete="off"
+             oninput="onSearch(this.value)" onfocus="openSugg()" onblur="closeSugg()">
+      <span class="si">🔍</span>
+      <div id="pubSugg" class="sugg"></div>
+    </div>
   </div>
+
   <div class="ctrl">
-    <label>بازه شباهت (log scale)</label>
+    <label>از ماه</label>
+    <select id="dateFrom" onchange="applyDateFilter()"></select>
+  </div>
+
+  <div class="ctrl">
+    <label>تا ماه</label>
+    <select id="dateTo" onchange="applyDateFilter()"></select>
+  </div>
+
+  <div class="ctrl">
+    <label>بازه شباهت (log)</label>
     <div class="rrow">
       <input type="range" id="logW" min="0.3" max="1.2" step="0.1" value="0.6"
              oninput="document.getElementById('lwv').textContent=this.value;renderTab2()">
@@ -200,13 +261,7 @@ tbody tr:hover{background:#f8faff}
   </div>
 </div>
 
-<div class="kpis">
-  <div class="kpi"><div class="lbl">میانگین درآمد ماهانه</div><div class="val" id="k1">—</div></div>
-  <div class="kpi"><div class="lbl">میانگین PV روزانه</div><div class="val" id="k2">—</div></div>
-  <div class="kpi"><div class="lbl">پوزیشن‌های فعال</div><div class="val" id="k3">—</div></div>
-  <div class="kpi"><div class="lbl">RPM میانگین</div><div class="val" id="k4">—</div></div>
-</div>
-
+<!-- tabs -->
 <div class="tabs-bar">
   <button class="tab-btn active" onclick="showTab('t1',this)">📈 عملکرد ناشر</button>
   <button class="tab-btn" onclick="showTab('t2',this)">💰 قیمت‌گذاری</button>
@@ -230,13 +285,12 @@ tbody tr:hover{background:#f8faff}
     <select id="t2f" onchange="renderPositions()"></select>
   </div>
   <div class="tbl-wrap" id="posTbl"></div>
-  <div id="cPosRpm" style="min-height:370px;margin-top:16px"></div>
 </div>
 
 <!-- Tab 2 -->
 <div id="t2" class="tab-panel">
   <div class="sec">ناشران مشابه</div>
-  <div id="simBar" class="sim-bar"></div>
+  <div id="simBar" class="sim-bar">ناشر انتخاب نشده</div>
 
   <div class="sec">جدول قیمت‌گذاری</div>
   <div class="tbl-wrap" id="pricingTbl"></div>
@@ -248,7 +302,7 @@ tbody tr:hover{background:#f8faff}
 <script>
 const RAW=""" + data_json + r""";
 
-// helpers
+// ─── helpers ──────────────────────────────────────────────────────────────────
 const fmtN=(n,s='')=>{if(n==null||isNaN(n))return'—';if(Math.abs(n)>=1e9)return(n/1e9).toFixed(1)+'B'+s;if(Math.abs(n)>=1e6)return(n/1e6).toFixed(1)+'M'+s;if(Math.abs(n)>=1e3)return(n/1e3).toFixed(0)+'K'+s;return n.toFixed(0)+s;};
 const fmtC=n=>n==null||isNaN(n)?'—':Math.round(n).toLocaleString();
 const R=v=>v==null||isNaN(v)?'—':String(Math.round(v));
@@ -258,7 +312,7 @@ const p25=a=>a.length?quantile(a,.25):null;
 const med=a=>a.length?quantile(a,.5):null;
 const p75=a=>a.length?quantile(a,.75):null;
 
-// pub_monthly_pv lookup
+// lookup tables
 const pmpLookup={};
 const monthFa={};
 for(const r of RAW.pub_monthly_pv){
@@ -267,39 +321,87 @@ for(const r of RAW.pub_monthly_pv){
   monthFa[r.month]=r.mf;
 }
 
-let selPid=null;
+// ─── state ────────────────────────────────────────────────────────────────────
+let selPid = String(RAW.publishers[0].id);
+let fromMonth = RAW.months_list[0].key;
+let toMonth   = RAW.months_list[RAW.months_list.length-1].key;
 
-// init publisher selector
-const pubSel=document.getElementById('pubSel');
-RAW.publishers.forEach(p=>{const o=document.createElement('option');o.value=String(p.id);o.textContent=p.name;pubSel.appendChild(o);});
-selPid=String(RAW.publishers[0].id);pubSel.value=selPid;
+// ─── date range selectors ─────────────────────────────────────────────────────
+(function initDateSelectors(){
+  const selF=document.getElementById('dateFrom');
+  const selT=document.getElementById('dateTo');
+  RAW.months_list.forEach(m=>{
+    const oF=document.createElement('option');oF.value=m.key;oF.textContent=m.fa;selF.appendChild(oF);
+    const oT=document.createElement('option');oT.value=m.key;oT.textContent=m.fa;selT.appendChild(oT);
+  });
+  selF.value=fromMonth;
+  selT.value=toMonth;
+})();
 
-function boot(){
-  selPid=pubSel.value;
-  updateKpis();populateFilters();renderOverview();renderPositions();renderTab2();
+function applyDateFilter(){
+  fromMonth=document.getElementById('dateFrom').value;
+  toMonth  =document.getElementById('dateTo').value;
+  if(fromMonth>toMonth){
+    // swap
+    [fromMonth,toMonth]=[toMonth,fromMonth];
+    document.getElementById('dateFrom').value=fromMonth;
+    document.getElementById('dateTo').value  =toMonth;
+  }
+  renderAll();
 }
 
-// KPIs
-function updateKpis(){
-  const rows=RAW.tab1.filter(r=>r.pid===selPid);
-  const pv=pmpLookup[selPid]||{};
-  const months=[...new Set(rows.map(r=>r.month))].sort();
-  const totalRev=rows.reduce((s,r)=>s+r.rev,0);
-  const avgMonRev=months.length?totalRev/months.length:0;
-  const pvArr=Object.values(pv);
-  const totalPv=pvArr.reduce((a,b)=>a+b,0);
-  const avgDailyPv=pvArr.length?totalPv/pvArr.length/30:0;
-  const rpm=totalPv?totalRev/totalPv:0;
-  const nPos=new Set(RAW.tab2_monthly.filter(r=>r.pid===selPid).map(r=>r.pos_id)).size;
-  document.getElementById('k1').textContent=fmtN(avgMonRev,' ت');
-  document.getElementById('k2').textContent=fmtN(avgDailyPv);
-  document.getElementById('k3').textContent=nPos;
-  document.getElementById('k4').textContent=R(rpm);
+function inRange(month){ return month>=fromMonth && month<=toMonth; }
+
+// ─── publisher search ─────────────────────────────────────────────────────────
+let _searchQ='';
+const suggEl=document.getElementById('pubSugg');
+const searchEl=document.getElementById('pubSearch');
+
+// init: show current selected publisher name
+searchEl.value=RAW.publishers[0].name;
+
+function onSearch(q){
+  _searchQ=q.trim().toLowerCase();
+  renderSugg();
+}
+function openSugg(){ renderSugg(); suggEl.classList.add('open'); }
+function closeSugg(){ setTimeout(()=>suggEl.classList.remove('open'),180); }
+
+function renderSugg(){
+  const q=_searchQ;
+  const matches = !q
+    ? RAW.publishers.slice(0,12)
+    : RAW.publishers.filter(p=>
+        p.name.toLowerCase().includes(q)||String(p.id).includes(q)
+      ).slice(0,12);
+
+  if(!matches.length){
+    suggEl.innerHTML='<div class="no-result">ناشری یافت نشد</div>';
+    suggEl.classList.add('open');
+    return;
+  }
+  suggEl.innerHTML=matches.map(p=>`
+    <div class="sugg-item${String(p.id)===selPid?' active-pub':''}"
+         onmousedown="selectPub('${p.id}','${p.name.replace(/'/g,"\\'")}')">
+      ${p.name}<span class="sid">#${p.id}</span>
+    </div>`).join('');
+  suggEl.classList.add('open');
 }
 
-// populate filters (position_label)
+function selectPub(id,name){
+  selPid=String(id);
+  searchEl.value=name;
+  _searchQ='';
+  suggEl.classList.remove('open');
+  populateFilters();
+  renderAll();
+}
+
+// ─── filter selectors ─────────────────────────────────────────────────────────
 function populateFilters(){
-  const pls=[...new Set(RAW.tab2_monthly.filter(r=>r.pid===selPid).map(r=>r.pl))].sort();
+  const pls=[...new Set(
+    RAW.tab2_monthly.filter(r=>r.pid===selPid&&inRange(r.month)).map(r=>r.pl)
+  )].sort();
   ['t1f','t2f'].forEach(id=>{
     const el=document.getElementById(id);
     el.innerHTML='<option value="">همه</option>';
@@ -307,11 +409,13 @@ function populateFilters(){
   });
 }
 
-// ── Tab 1: Overview charts ────────────────────────────────────────────────────
+function renderAll(){ populateFilters(); renderOverview(); renderPositions(); renderTab2(); }
+
+// ─── Tab 1: Overview ──────────────────────────────────────────────────────────
 function renderOverview(){
   const filt=document.getElementById('t1f').value;
   const pv=pmpLookup[selPid]||{};
-  let rows=RAW.tab1.filter(r=>r.pid===selPid);
+  let rows=RAW.tab1.filter(r=>r.pid===selPid&&inRange(r.month));
   if(filt)rows=rows.filter(r=>r.pl===filt);
 
   const bm={};
@@ -327,35 +431,31 @@ function renderOverview(){
   const reg=ms.map((m,i)=>tot[i]-fix[i]-bb[i]);
   const rpm=ms.map(m=>pv[m]?Math.round(bm[m].rev/pv[m]):null);
 
-  // Stacked bar: regular + fixed + billboard = total
   Plotly.react('cRev',[
-    {type:'bar',x:mf,y:reg,name:'درآمد معمولی',marker:{color:'#4285F4'},hovertemplate:'%{y:,.0f}<extra>معمولی</extra>'},
-    {type:'bar',x:mf,y:fix,name:'فیکس',marker:{color:'#34A853'},hovertemplate:'%{y:,.0f}<extra>فیکس</extra>'},
-    {type:'bar',x:mf,y:bb, name:'بیلبورد',marker:{color:'#FBBC04'},hovertemplate:'%{y:,.0f}<extra>بیلبورد</extra>'},
-  ],{
-    title:'درآمد ماهانه (تومان)',barmode:'stack',height:320,
-    xaxis:{title:'ماه',tickangle:-30},yaxis:{title:'تومان'},
-    legend:{orientation:'h',y:1.18},
-    margin:{t:50,b:70,l:60,r:10},
-  },{responsive:true});
+    {type:'bar',x:mf,y:reg,name:'درآمد معمولی',marker:{color:'#4285F4'}},
+    {type:'bar',x:mf,y:fix,name:'فیکس',marker:{color:'#34A853'}},
+    {type:'bar',x:mf,y:bb, name:'بیلبورد',marker:{color:'#FBBC04'}},
+  ],{title:'درآمد ماهانه',barmode:'stack',height:320,
+     xaxis:{title:'ماه',tickangle:-30},yaxis:{title:'تومان'},
+     legend:{orientation:'h',y:1.18},margin:{t:50,b:70,l:60,r:10}},{responsive:true});
 
   Plotly.react('cRpm',[
     {type:'scatter',mode:'lines+markers',x:mf,y:rpm,
      line:{color:'#EA4335',width:2},marker:{size:7}},
-  ],{
-    title:'RPM ماهانه (تومان/پیج‌ویو)',height:320,
-    xaxis:{title:'ماه',tickangle:-30},yaxis:{title:'RPM'},
-    margin:{t:50,b:70,l:60,r:10},
-  },{responsive:true});
+  ],{title:'RPM ماهانه (تومان/پیج‌ویو)',height:320,
+     xaxis:{title:'ماه',tickangle:-30},yaxis:{title:'RPM'},
+     margin:{t:50,b:70,l:60,r:10}},{responsive:true});
 }
 
-// ── Tab 1: Positions table + chart ────────────────────────────────────────────
+// ─── Tab 1: Positions table ───────────────────────────────────────────────────
 function renderPositions(){
   const filt=document.getElementById('t2f').value;
   const pv=pmpLookup[selPid]||{};
-  const totalPv=Object.values(pv).reduce((a,b)=>a+b,0);
+  const filtPv={};
+  Object.entries(pv).forEach(([m,v])=>{ if(inRange(m))filtPv[m]=v; });
+  const totalPv=Object.values(filtPv).reduce((a,b)=>a+b,0);
 
-  let rows=RAW.tab2_monthly.filter(r=>r.pid===selPid);
+  let rows=RAW.tab2_monthly.filter(r=>r.pid===selPid&&inRange(r.month));
   if(filt)rows=rows.filter(r=>r.pl===filt);
 
   const pm={};
@@ -373,91 +473,85 @@ function renderPositions(){
     months:p.months.size,
   })).sort((a,b)=>b.rpm-a.rpm);
 
-  // total row
   const totRev=sumRows.reduce((s,r)=>s+r.avgRev,0);
   const totRpm=sumRows.reduce((s,r)=>s+r.rpm,0);
-  const totFixed=sumRows.reduce((s,r)=>s+r.avgRev*(r.fPct/100),0);
-  const totBb=sumRows.reduce((s,r)=>s+r.avgRev*(r.bbPct/100),0);
+  const totF=sumRows.reduce((s,r)=>s+r.avgRev*(r.fPct/100),0);
+  const totB=sumRows.reduce((s,r)=>s+r.avgRev*(r.bbPct/100),0);
 
   const wrap=document.getElementById('posTbl');
   wrap.innerHTML='';
-  let sortCol='rpm',sortAsc=false;
+  let sc='rpm',sa=false;
 
   function buildTbl(){
     const sorted=[...sumRows].sort((a,b)=>{
-      const va=a[sortCol],vb=b[sortCol];
+      const va=a[sc],vb=b[sc];
       if(va==null&&vb==null)return 0;if(va==null)return 1;if(vb==null)return -1;
-      return sortAsc?(va>vb?1:-1):(va<vb?1:-1);
+      return sa?(va>vb?1:-1):(va<vb?1:-1);
     });
     const cols=[
-      {k:'desc',  l:'توضیحات',       f:v=>v.substring(0,40)},
-      {k:'pl',    l:'دسته‌بندی',     f:v=>v},
-      {k:'avgRev',l:'درآمد ماهانه',  f:fmtC},
-      {k:'rpm',   l:'RPM',           f:R},
-      {k:'fPct',  l:'فیکس %',        f:v=>v.toFixed(0)+'%'},
-      {k:'bbPct', l:'بیلبورد %',     f:v=>v.toFixed(0)+'%'},
-      {k:'months',l:'ماه‌های فعال',  f:v=>String(v)},
+      {k:'desc',  l:'توضیحات',      f:v=>v.substring(0,40)},
+      {k:'pl',    l:'دسته‌بندی',    f:v=>v},
+      {k:'avgRev',l:'درآمد ماهانه', f:fmtC},
+      {k:'rpm',   l:'RPM',          f:R},
+      {k:'fPct',  l:'فیکس %',       f:v=>v.toFixed(0)+'%'},
+      {k:'bbPct', l:'بیلبورد %',    f:v=>v.toFixed(0)+'%'},
+      {k:'months',l:'ماه‌های فعال', f:String},
     ];
     let h=`<table><thead><tr>`;
-    cols.forEach(c=>{h+=`<th onclick="sortPT('${c.k}')">${c.l}${sortCol===c.k?(sortAsc?'▲':'▼'):''}</th>`;});
+    cols.forEach(c=>{h+=`<th onclick="sortPosT('${c.k}')">${c.l}${sc===c.k?(sa?'▲':'▼'):''}</th>`;});
     h+=`</tr></thead><tbody>`;
     sorted.forEach(r=>{h+=`<tr>${cols.map(c=>`<td>${c.f(r[c.k])}</td>`).join('')}</tr>`;});
-    // total row
-    h+=`<tr class="total-row">
-      <td>جمع</td><td>—</td>
-      <td>${fmtC(totRev)}</td>
-      <td>${R(totRpm)}</td>
-      <td>${totRev?((totFixed/totRev)*100).toFixed(0)+'%':'—'}</td>
-      <td>${totRev?((totBb/totRev)*100).toFixed(0)+'%':'—'}</td>
-      <td>—</td>
-    </tr>`;
+    h+=`<tr class="total-row"><td>جمع</td><td>—</td><td>${fmtC(totRev)}</td><td>${R(totRpm)}</td>`+
+       `<td>${totRev?((totF/totRev)*100).toFixed(0)+'%':'—'}</td>`+
+       `<td>${totRev?((totB/totRev)*100).toFixed(0)+'%':'—'}</td><td>—</td></tr>`;
     h+=`</tbody></table>`;
     wrap.innerHTML=h;
   }
-  window.sortPT=(col)=>{if(sortCol===col)sortAsc=!sortAsc;else{sortCol=col;sortAsc=false;}buildTbl();};
+  window.sortPosT=(col)=>{if(sc===col)sa=!sa;else{sc=col;sa=false;}buildTbl();};
   buildTbl();
-
-  // Top 10 trend chart
-  const top10=Object.entries(pm).sort((a,b)=>b[1].rev-a[1].rev).slice(0,10).map(e=>e[0]);
-  const traces=[];
-  top10.forEach(posId=>{
-    const p=pm[posId];
-    const mr=rows.filter(r=>r.pos_id===posId).sort((a,b)=>a.month>b.month?1:-1);
-    traces.push({
-      type:'scatter',mode:'lines+markers',name:p.desc.substring(0,30),
-      x:mr.map(r=>monthFa[r.month]||r.month),
-      y:mr.map(r=>pv[r.month]?Math.round(r.rev/pv[r.month]):null),
-      marker:{size:5},
-    });
-  });
-  Plotly.react('cPosRpm',traces,{
-    title:'ترند RPM ماهانه — ۱۰ پوزیشن برتر',height:370,
-    xaxis:{title:'ماه',tickangle:-30},yaxis:{title:'RPM'},
-    legend:{orientation:'h',y:-0.4,x:0},
-    margin:{t:40,b:120,l:60,r:10},
-  },{responsive:true});
 }
 
-// ── Tab 2: Pricing ────────────────────────────────────────────────────────────
+// ─── Tab 2: Pricing ───────────────────────────────────────────────────────────
 function getSimilarPids(){
   const lw=parseFloat(document.getElementById('logW').value);
   const tPv=RAW.pub_avg_pv[selPid];
+  const tCat=RAW.pub_cats[selPid]||'';
   if(!tPv||tPv<=0)return[];
   const tLog=Math.log10(tPv);
   return Object.entries(RAW.pub_avg_pv)
     .filter(([pid,pv])=>pid!==selPid&&pv>0&&Math.abs(Math.log10(pv)-tLog)<=lw)
-    .map(([pid])=>pid);
+    .map(([pid,pv])=>({
+      pid,
+      dist:Math.abs(Math.log10(pv)-tLog),
+      sameCat: tCat && RAW.pub_cats[pid]===tCat,
+    }))
+    // same category + closer pv first
+    .sort((a,b)=>{
+      if(a.sameCat&&!b.sameCat)return -1;
+      if(!a.sameCat&&b.sameCat)return 1;
+      return a.dist-b.dist;
+    })
+    .map(x=>x.pid);
 }
 
 function renderTab2(){
   const simPids=getSimilarPids();
   const tPv=RAW.pub_avg_pv[selPid];
+  const tCat=RAW.pub_cats[selPid]||'';
 
-  // sim info
-  const simNames=simPids.map(pid=>{const p=RAW.publishers.find(x=>String(x.id)===pid);return p?`${p.name} (${fmtN(RAW.pub_avg_pv[pid])})`:pid;});
+  // sim bar
+  const simNames=simPids.map(pid=>{
+    const p=RAW.publishers.find(x=>String(x.id)===pid);
+    const cat=RAW.pub_cats[pid]||'';
+    const match=tCat&&cat===tCat;
+    return p?`<span>${p.name}<span class="cat-badge${match?' match':''}"> ${cat||'?'}</span></span>`:pid;
+  });
   document.getElementById('simBar').innerHTML=
-    `<strong>${simPids.length} ناشر مشابه</strong> — PV روزانه شما: <strong>${fmtN(tPv)}</strong><br>`+
-    (simNames.length?`<span class="spubs">${simNames.join(' &nbsp;·&nbsp; ')}</span>`:'بازه شباهت را افزایش دهید.');
+    `<strong>${simPids.length} ناشر مشابه</strong>`+
+    (tCat?` — دسته شما: <span class="cat-badge match">${tCat}</span>`:'')+
+    ` — PV روزانه: <strong>${fmtN(tPv)}</strong><br>`+
+    (simNames.length?`<span class="spubs">${simNames.join(' &nbsp;·&nbsp; ')}</span>`:
+    '<span style="color:#c0392b">ناشر مشابهی یافت نشد — بازه شباهت را افزایش دهید.</span>');
 
   if(!simPids.length){
     document.getElementById('pricingTbl').innerHTML='<div class="nodata">ناشر مشابه یافت نشد.</div>';
@@ -465,16 +559,17 @@ function renderTab2(){
     return;
   }
 
-  // target publisher data
+  // filtered target pv
   const tPvByMonth=pmpLookup[selPid]||{};
-  const totalTPv=Object.values(tPvByMonth).reduce((a,b)=>a+b,0);
-  const nMon=Object.keys(tPvByMonth).length||1;
+  const filtTPv=Object.entries(tPvByMonth).filter(([m])=>inRange(m));
+  const totalTPv=filtTPv.reduce((s,[,v])=>s+v,0);
+  const nMon=filtTPv.length||1;
   const targetMonPv=totalTPv/nMon;
 
-  // scenarios per pl from similar publishers
-  const simRows=RAW.tab2_monthly.filter(r=>simPids.includes(r.pid));
-  const plRpms={};   // pl → {pid → [{month,rpm,mf}]}
-  const plAllRpms={}; // pl → [rpm,...] for P25/med/P75
+  // scenarios per pl from similar publishers (filtered by date range)
+  const simRows=RAW.tab2_monthly.filter(r=>simPids.includes(r.pid)&&inRange(r.month));
+  const plRpms={};
+  const plAllRpms={};
 
   simRows.forEach(r=>{
     const mpv=pmpLookup[r.pid]&&pmpLookup[r.pid][r.month];
@@ -482,89 +577,78 @@ function renderTab2(){
     const rpm=r.rev/mpv;
     if(!plRpms[r.pl])plRpms[r.pl]={};
     if(!plRpms[r.pl][r.pid])plRpms[r.pl][r.pid]=[];
-    plRpms[r.pl][r.pid].push({month:r.month,mf:monthFa[r.month]||r.month,rev:r.rev,rpm});
+    plRpms[r.pl][r.pid].push({month:r.month,mf:monthFa[r.month]||r.month,rpm});
     if(!plAllRpms[r.pl])plAllRpms[r.pl]=[];
     plAllRpms[r.pl].push(rpm);
   });
 
   const scen={};
   Object.entries(plAllRpms).forEach(([pl,arr])=>{
-    if(arr.length>=2) scen[pl]={bad:p25(arr),real:med(arr),good:p75(arr),n:arr.length};
+    if(arr.length>=2)scen[pl]={bad:p25(arr),real:med(arr),good:p75(arr),n:arr.length};
   });
 
   // target positions
   const tPosMap={};
-  RAW.tab2_monthly.filter(r=>r.pid===selPid).forEach(r=>{
+  RAW.tab2_monthly.filter(r=>r.pid===selPid&&inRange(r.month)).forEach(r=>{
     if(!tPosMap[r.pos_id])tPosMap[r.pos_id]={desc:r.desc,pl:r.pl,rev:0,months:new Set()};
     tPosMap[r.pos_id].rev+=r.rev;tPosMap[r.pos_id].months.add(r.month);
   });
 
-  // Build pricing table rows
   const pRows=Object.values(tPosMap).map(p=>{
     const s=scen[p.pl];
     const curRpm=totalTPv?p.rev/totalTPv:0;
-    const avgMon=p.months.size?p.rev/p.months.size:0;
     return {
-      pl:p.pl,desc:p.desc,
-      curRpm,avgMon,
-      bad:s?.bad??null, real:s?.real??null, good:s?.good??null, n:s?.n??0,
-      revBad: s?s.bad*targetMonPv:null,
+      pl:p.pl,desc:p.desc,curRpm,
+      avgMon:p.months.size?p.rev/p.months.size:0,
+      bad:s?.bad??null,real:s?.real??null,good:s?.good??null,n:s?.n??0,
+      revBad:s?s.bad*targetMonPv:null,
       revReal:s?s.real*targetMonPv:null,
       revGood:s?s.good*targetMonPv:null,
     };
   }).sort((a,b)=>b.curRpm-a.curRpm);
 
-  // totals (only rows with scenario data)
-  const withScen=pRows.filter(r=>r.real!=null);
+  const ws=pRows.filter(r=>r.real!=null);
   const totCurRpm=pRows.reduce((s,r)=>s+r.curRpm,0);
-  const totBad=withScen.reduce((s,r)=>s+r.bad,0);
-  const totReal=withScen.reduce((s,r)=>s+r.real,0);
-  const totGood=withScen.reduce((s,r)=>s+r.good,0);
-  const totRevBad=withScen.reduce((s,r)=>s+r.revBad,0);
-  const totRevReal=withScen.reduce((s,r)=>s+r.revReal,0);
-  const totRevGood=withScen.reduce((s,r)=>s+r.revGood,0);
+  const totBad=ws.reduce((s,r)=>s+r.bad,0);
+  const totReal=ws.reduce((s,r)=>s+r.real,0);
+  const totGood=ws.reduce((s,r)=>s+r.good,0);
+  const totRevReal=ws.reduce((s,r)=>s+r.revReal,0);
 
   // Pricing table
   const cols=[
-    {k:'pl',    l:'دسته‌بندی'},
-    {k:'desc',  l:'توضیحات',       f:v=>v.substring(0,38)},
-    {k:'curRpm',l:'RPM فعلی',      f:R},
-    {k:'bad',   l:'RPM بدبینانه',  f:R},
-    {k:'real',  l:'RPM واقع‌بینانه',f:R},
-    {k:'good',  l:'RPM خوش‌بینانه',f:R},
+    {k:'pl',     l:'دسته‌بندی'},
+    {k:'desc',   l:'توضیحات',         f:v=>v.substring(0,38)},
+    {k:'curRpm', l:'RPM فعلی',        f:R},
+    {k:'bad',    l:'RPM بدبینانه',    f:R},
+    {k:'real',   l:'RPM واقع‌بینانه', f:R},
+    {k:'good',   l:'RPM خوش‌بینانه',  f:R},
     {k:'revReal',l:'درآمد واقع‌بینانه',f:fmtC},
-    {k:'n',     l:'نمونه‌ها',      f:v=>v?String(v):'—'},
+    {k:'n',      l:'نمونه‌ها',        f:v=>v?String(v):'—'},
   ];
 
-  let sortPC='real',sortPA=false;
+  let sPC='real',sPA=false;
   const ptWrap=document.getElementById('pricingTbl');
 
   function buildPT(){
     const sorted=[...pRows].sort((a,b)=>{
-      const va=a[sortPC],vb=b[sortPC];
+      const va=a[sPC],vb=b[sPC];
       if(va==null&&vb==null)return 0;if(va==null)return 1;if(vb==null)return -1;
-      return sortPA?(va>vb?1:-1):(va<vb?1:-1);
+      return sPA?(va>vb?1:-1):(va<vb?1:-1);
     });
     let h=`<table><thead><tr>`;
-    cols.forEach(c=>{h+=`<th onclick="sortPT2('${c.k}')">${c.l}${sortPC===c.k?(sortPA?'▲':'▼'):''}</th>`;});
+    cols.forEach(c=>{h+=`<th onclick="sortPT2('${c.k}')">${c.l}${sPC===c.k?(sPA?'▲':'▼'):''}</th>`;});
     h+=`</tr></thead><tbody>`;
     sorted.forEach(r=>{h+=`<tr>${cols.map(c=>`<td>${c.f?c.f(r[c.k]):(r[c.k]??'—')}</td>`).join('')}</tr>`;});
-    h+=`<tr class="total-row">
-      <td>جمع</td><td>—</td>
-      <td>${R(totCurRpm)}</td>
-      <td>${R(totBad)}</td>
-      <td>${R(totReal)}</td>
-      <td>${R(totGood)}</td>
-      <td>${fmtC(totRevReal)}</td>
-      <td>—</td>
-    </tr>`;
+    h+=`<tr class="total-row"><td>جمع</td><td>—</td>`+
+       `<td>${R(totCurRpm)}</td><td>${R(totBad)}</td><td>${R(totReal)}</td><td>${R(totGood)}</td>`+
+       `<td>${fmtC(totRevReal)}</td><td>—</td></tr>`;
     h+=`</tbody></table>`;
     ptWrap.innerHTML=h;
   }
-  window.sortPT2=(col)=>{if(sortPC===col)sortPA=!sortPA;else{sortPC=col;sortPA=false;}buildPT();};
+  window.sortPT2=(col)=>{if(sPC===col)sPA=!sPA;else{sPC=col;sPA=false;}buildPT();};
   buildPT();
 
-  // Benchmark cards (compact)
+  // Benchmark cards
   const usedPls=[...new Set(pRows.map(r=>r.pl))];
   let benchHtml='';
   usedPls.forEach(pl=>{
@@ -572,12 +656,17 @@ function renderTab2(){
     const pubData=plRpms[pl]||{};
     const pubRows=Object.entries(pubData).map(([pid,months])=>{
       const pub=RAW.publishers.find(x=>String(x.id)===pid);
+      const cat=RAW.pub_cats[pid]||'';
+      const match=tCat&&cat===tCat;
       const rpms=months.map(m=>m.rpm);
-      const avg=rpms.reduce((a,b)=>a+b)/rpms.length;
-      return {name:pub?pub.name:pid,avg:Math.round(avg),n:months.length};
+      return {name:pub?pub.name:pid,cat,match,avg:Math.round(rpms.reduce((a,b)=>a+b)/rpms.length),n:months.length};
     }).sort((a,b)=>b.avg-a.avg);
 
-    const trs=pubRows.map(r=>`<tr><td>${r.name}</td><td>${r.avg}</td><td>${r.n}</td></tr>`).join('');
+    const trs=pubRows.map(r=>`<tr>
+      <td>${r.name}${r.cat?`<span class="cat-badge${r.match?' match':''}">${r.cat}</span>`:''}</td>
+      <td>${r.avg}</td><td>${r.n}</td>
+    </tr>`).join('');
+
     benchHtml+=`
     <div class="bench-card">
       <div class="bench-hdr">${pl}</div>
@@ -597,14 +686,18 @@ function renderTab2(){
   document.getElementById('benchCards').innerHTML=benchHtml||'<div class="nodata">داده بنچمارک کافی نیست.</div>';
 }
 
-// tab switch
+// ─── tab switch ───────────────────────────────────────────────────────────────
 function showTab(id,btn){
   document.querySelectorAll('.tab-panel').forEach(e=>e.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(e=>e.classList.remove('active'));
   document.getElementById(id).classList.add('active');btn.classList.add('active');
 }
 
-boot();
+// ─── boot ─────────────────────────────────────────────────────────────────────
+populateFilters();
+renderOverview();
+renderPositions();
+renderTab2();
 </script>
 </body>
 </html>
